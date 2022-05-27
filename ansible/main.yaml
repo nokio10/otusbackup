@@ -1,0 +1,125 @@
+- hosts: all
+  become: true
+  tasks:
+
+#Подключить EPEL репозиторий с дополнительными пакетами
+  - name: install epel
+    yum:
+      name: epel-release
+      state: present
+
+#Устанавливить на client и backup сервере borgbackup
+  - name: install borgbackup
+    yum:
+      name: borgbackup
+      state: present      
+
+
+- hosts: backup
+  become: true
+  tasks:
+#На сервере backup создать пользователя borg
+  - name: Add users
+    user:
+      name: "borg"
+      shell: /bin/bash
+      state: present
+      password_lock: no
+
+#Создать каталог /var/backup и назначаем на него права пользователя borg
+  - name: mkdir 
+    file:
+      path: /var/backup
+      state: directory
+      owner: borg
+      group: borg
+      mode: '0755'
+
+#На сервер backup создать каталог ~/.ssh/authorized_keys в каталоге /home/borg
+  - name: authorized_keys 
+    file:
+      path: /home/borg/.ssh/authorized_keys
+      owner: borg
+      group: borg
+      mode: '0755'
+
+
+- hosts: client
+  become: true
+  tasks:
+#На client генерирует ssh-ключ
+  - name: Generate /etc/ssh/ RSA host key
+    command : ssh-keygen -q -t rsa -f /etc/ssh/ssh_host_rsa_key -C "" -N ""
+    args:
+      creates: /etc/ssh/ssh_host_rsa_key
+
+#Сохраняет значение ключа в переменную
+  - name: Register ssh key
+    shell: cat /etc/ssh/ssh_host_rsa_key
+    register: sshkey
+
+  - name: debug 
+    debug: 
+      msg: sshkey.stdout_lines
+
+
+- hosts: backup
+  become: true
+  tasks:
+#Добавляет ssh ключ на сервер backup в файл authorized_keys
+  - name: Add ssh key 
+    authorized_key:
+      user: "borg"
+      state: present
+      key: "{{ sshkey.stdout_lines }}"
+
+
+- hosts: client
+  become: true
+  vars:
+    server_address: 192.168.56.160
+  tasks:
+#Инициализирует репозиторий borg на backup сервере с client сервера
+  - name: Init borg
+    shell: borg init --encryption=repokey borg@{{ server_address }}:/var/backup/
+
+#Запускаем для проверки создания бэкапа
+  - name: test run
+    shell: borg create --stats --list borg@{{ server_address }}:/var/backup/::"etc-{now:%Y-%m-%d_%H:%M:%S}" /etc   
+
+#Показывает, что получилось
+  - name: Result
+    shell: borg list borg@192.168.11.160:/var/backup/
+
+#Показывает список файлов и сохраняет
+  - name:
+    shell: borg list
+    register: borglist
+
+#Достает файл из бэкапа
+  - name:
+    shell: borg extract {{ borglist.stdout_lines }}
+
+#Создает сервис
+  - name: load borg-backup.service
+    copy:
+      src: "borg-backup.service"
+      dest: /etc/systemd/system/borg-backup.service
+      owner: root
+      group: root
+      mode: '0644'
+
+#Создает таймер 
+  - name: load borg-backup.timer
+    copy:
+      src: "borg-backup.timer"
+      dest:  /etc/systemd/system/borg-backup.timer
+      owner: root
+      group: root
+      mode: '0644'
+
+  - name: start borg-backup.timer
+    systemd:
+      name: borg-backup.timer
+      enabled: yes
+      state: start
