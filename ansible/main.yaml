@@ -36,48 +36,57 @@
       mode: '0755'
 
 #На сервер backup создать каталог ~/.ssh/authorized_keys в каталоге /home/borg
-  - name: authorized_keys 
-    file:
-      path: /home/borg/.ssh/authorized_keys
-      owner: borg
-      group: borg
-      mode: '0755'
-
+#  - name: authorized_keys 
+#    file:
+#      path: /home/borg/.ssh
+#      owner: borg
+#      group: borg
+#      mode: '0755'
+#      state: directory
 
 - hosts: client
   become: true
   tasks:
-#На client генерирует ssh-ключ
-  - name: Generate /etc/ssh/ RSA host key
-    command : ssh-keygen -q -t rsa -f /etc/ssh/ssh_host_rsa_key -C "" -N ""
-    args:
-      creates: /etc/ssh/ssh_host_rsa_key
+#Отправляет приватный ключ на клиент
+  - name: mkdir
+    file:
+      path: /home/root/.ssh
+      state: directory
+      owner: root
+      group: root
+      mode: '0755'
 
-#Сохраняет значение ключа в переменную
   - name: Register ssh key
-    shell: cat /etc/ssh/ssh_host_rsa_key
-    register: sshkey
-
-  - name: debug 
-    debug: 
-      msg: sshkey.stdout_lines
+    copy:
+      src: id_rsa
+      dest: /home/root/.ssh/id_rsa
+      owner: root
+      group: root
+      mode: '600'
 
 
 - hosts: backup
   become: true
   tasks:
 #Добавляет ssh ключ на сервер backup в файл authorized_keys
-  - name: Add ssh key 
-    authorized_key:
-      user: "borg"
-      state: present
-      key: "{{ sshkey.stdout_lines }}"
+  - name: mkdir
+    file:
+      path: /home/borg/.ssh
+      state: directory
+      owner: borg
+      group: borg
+      mode: '0755'
+
+  - name: Register ssh key
+    copy:
+      src: id_rsa.pub
+      dest: /home/borg/.ssh/authorized_keys
 
 
 - hosts: client
   become: true
   vars:
-    server_address: 192.168.56.160
+    server_address: 192.168.56.15
   tasks:
 #Инициализирует репозиторий borg на backup сервере с client сервера
   - name: Init borg
@@ -89,7 +98,7 @@
 
 #Показывает, что получилось
   - name: Result
-    shell: borg list borg@192.168.11.160:/var/backup/
+    shell: borg list borg@{{ server_address }}:/var/backup/
 
 #Показывает список файлов и сохраняет
   - name:
